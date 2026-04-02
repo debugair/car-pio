@@ -617,14 +617,12 @@ joyContainer.addEventListener('touchstart', function(e) {
   joystickActive = true;
   handleJoystickInput(e.touches[0].clientX, e.touches[0].clientY);
 });
-document.addEventListener('touchmove', function(e) {
-  if (joystickActive) {
-    e.preventDefault(); // verhindert Scrollen während Joystick-Benutzung
-    handleJoystickInput(e.touches[0].clientX, e.touches[0].clientY);
-  }
+joyContainer.addEventListener('touchmove', function(e) {
+  e.preventDefault(); // verhindert Scrollen nur innerhalb des Joystick-Bereichs
+  handleJoystickInput(e.touches[0].clientX, e.touches[0].clientY);
 }, { passive: false });
-document.addEventListener('touchend', function() {
-  if (joystickActive) releaseJoystick();
+joyContainer.addEventListener('touchend', function() {
+  releaseJoystick();
 });
 
 
