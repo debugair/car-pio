@@ -1,132 +1,134 @@
-# Car Project — ESP32-S3-DEVKITC-1
+# Auto-Projekt — ESP32-S3-DEVKITC-1
 
-Wi-Fi controlled differential-drive car using an ESP32-S3 and L298N motor driver. The ESP32 hosts the web UI directly from its flash (LittleFS), so no PC/server is needed — connect to the ESP32's IP and drive. The browser runs the full control loop and connects via WebSocket directly to the board.
+WLAN-gesteuertes Differentialantrieb-Auto mit einem ESP32-S3 und L298N Motortreiber. Der ESP32 stellt die Weboberfläche direkt aus seinem Flash-Speicher (LittleFS) bereit — kein PC oder Server nötig. Einfach die IP-Adresse des ESP32 im Browser öffnen und losfahren. Die Steuerlogik läuft vollständig im Browser und kommuniziert per WebSocket direkt mit der Platine.
+
+![Vorschau](./.img/car.png "Logo")
 
 ---
 
-## Quick Start
+## Schnellstart
 
-### 1. Configure
+### 1. Konfigurieren
 
-Edit [`include/config.h`](include/config.h) — set `WIFI_SSID` and `WIFI_PASSWORD`.
+[`include/config.h`](include/config.h) öffnen und `WIFI_SSID` sowie `WIFI_PASSWORD` eintragen.
 
-### 2. Flash firmware
+### 2. Firmware flashen
 
 ```bash
 pio run -t upload
 ```
 
-### 3. Flash web UI
+### 3. Weboberfläche flashen
 
 ```bash
 pio run -t uploadfs
 ```
 
-This uploads `data/index.html`, `data/favicon.ico`, and `data/icon.png` to LittleFS on the ESP32.
+Überträgt `data/index.html`, `data/favicon.ico` und `data/icon.png` in den LittleFS-Speicher des ESP32.
 
-### 4. Open Serial Monitor
+### 4. Seriellen Monitor öffnen
 
-Note the IP address printed (e.g. `192.168.5.82`), then open `http://<ip>` in a browser.
+Die angezeigte IP-Adresse (z.B. `192.168.5.82`) notieren, dann `http://<ip>` im Browser öffnen.
 
-### 5. Drive
+### 5. Fahren
 
-| Key | Action |
-|-----|--------|
-| W | Forward |
-| S | Backward |
-| A | Pivot left |
-| D | Pivot right |
-| W+A | Forward-left arc |
-| W+D | Forward-right arc |
-| Release all | Stop (deadman's handle) |
+| Taste | Aktion |
+| ----- | ------ |
+| W | Vorwärts |
+| S | Rückwärts |
+| A | Links drehen |
+| D | Rechts drehen |
+| W+A | Vorwärts-links Kurve |
+| W+D | Vorwärts-rechts Kurve |
+| Alle loslassen | Stopp (Totmann-Schalter) |
 
-Drag the **virtual joystick** for 360° analog control (mouse + touch).
+Den **virtuellen Joystick** ziehen für 360°-Analogsteuerung (Maus + Touch).
 
 ---
 
-## Architecture
+## Architektur
 
-The web UI is served directly from the ESP32. The browser connects back to the same host via WebSocket — no Python, no FastAPI, no PC middleman.
+Die Weboberfläche wird direkt vom ESP32 ausgeliefert. Der Browser verbindet sich per WebSocket zurück zum gleichen Host — kein Python, kein FastAPI, kein PC dazwischen.
 
 ```mermaid
 flowchart LR
     Browser["Browser\nhttp://&lt;esp32-ip&gt;"] -- "HTTP GET /" --> ESP["ESP32-S3\nWebServer :80 + LittleFS"]
     ESP -- "index.html / icon.png / favicon.ico" --> Browser
-    Browser -- "WebSocket :81\nleft,right (50ms)" --> ESP
-    ESP -- "WebSocket :81\nT:leftRPM,rightRPM[,battV]" --> Browser
-    ESP -- "PWM" --> LM["Left Motor"]
-    ESP -- "PWM" --> RM["Right Motor"]
-    EncL["Left Encoder"] -- "pulses" --> ESP
-    EncR["Right Encoder"] -- "pulses" --> ESP
+    Browser -- "WebSocket :81\nlinks,rechts (50ms)" --> ESP
+    ESP -- "WebSocket :81\nT:linksRPM,rechtsRPM" --> Browser
+    ESP -- "PWM" --> LM["Linker Motor"]
+    ESP -- "PWM" --> RM["Rechter Motor"]
+    EncL["Linker Encoder"] -- "Pulse" --> ESP
+    EncR["Rechter Encoder"] -- "Pulse" --> ESP
 ```
 
-### Protocol
+### Protokoll
 
-**Browser → ESP32** (every 50ms):
+**Browser → ESP32** (alle 50ms):
 
 ```text
-left_speed,right_speed
+links_speed,rechts_speed
 ```
 
-Values: `-255` (full backward) to `255` (full forward). Example: `"200,-200"` = pivot right.
+Wertebereich: `-255` (volle Rückwärtsfahrt) bis `255` (volle Vorwärtsfahrt). Beispiel: `"200,-200"` = Pirouette rechts.
 
-**ESP32 → Browser** (every 100ms):
+**ESP32 → Browser** (alle 100ms):
 
 ```text
-T:left_rpm,right_rpm[,battery_voltage]
+T:links_rpm,rechts_rpm
 ```
 
-Battery voltage field is optional — UI hides the battery widget if absent or `< 0.5`.
+> Die Weboberfläche unterstützt einen optionalen dritten Wert `T:links,rechts,akkuV` — die Akkuanzeige erscheint automatisch sobald dieser gesendet wird. Die Akkuüberwachungs-Software ist aktuell nicht implementiert (Hardware vorhanden, siehe config.h).
 
 ---
 
-## Motor Control Model
+## Steuermodell
 
-The control loop runs entirely in the browser (JavaScript) at 50ms intervals.
+Die Steuerlogik läuft vollständig im Browser (JavaScript) im 50ms-Takt.
 
-1. **Input** — WASD keys produce a unit vector `(x, y)`. The virtual joystick produces an analog vector clamped to the unit circle. Joystick takes priority when non-zero.
-2. **Acceleration ramp** — Current vector linearly interpolates toward target at a configurable rate (`accel_time`: 0.1–2.0s).
-3. **Differential mixing** — `(x, y)` → left/right motor speeds:
-   - `left  = y + x × turn_sharpness`
-   - `right = y − x × turn_sharpness`
-4. **Output** — Clamped to `[-1, 1]`, scaled by `max_speed` (0–255), sent to ESP32.
+1. **Eingabe** — WASD-Tasten erzeugen einen Einheitsvektor `(x, y)`. Der virtuelle Joystick erzeugt einen analogen Vektor, begrenzt auf den Einheitskreis. Joystick hat Vorrang wenn er bewegt wird.
+2. **Beschleunigungsrampe** — Der aktuelle Vektor interpoliert linear zum Zielvektor mit konfigurierbarer Rate (`accel_time`: 0,1–2,0s).
+3. **Differentialmischung** — `(x, y)` → links/rechts Motorgeschwindigkeiten:
+   - `links  = y + x × turn_sharpness`
+   - `rechts = y − x × turn_sharpness`
+4. **Ausgabe** — Auf `[-1, 1]` begrenzt, mit `max_speed` (0–255) skaliert, an ESP32 gesendet.
 
-### Tunable Parameters (live sliders in UI)
+### Einstellbare Parameter (Live-Schieberegler in der UI)
 
-| Parameter | Range | Default | Effect |
-|-----------|-------|---------|--------|
-| Acceleration | 0.1–2.0s | 0.5s | Time to reach full speed from standstill |
-| Turn Sharpness | 0.0–1.0 | 0.5 | 0 = gentle arc, 1 = full pivot turn |
-| Max Speed | 0–255 | 255 | PWM cap sent to motors |
+| Parameter | Bereich | Standard | Wirkung |
+| --------- | ------- | -------- | ------- |
+| Beschleunigung | 0,1–2,0s | 0,5s | Zeit bis Vollgas aus dem Stand |
+| Kurvenradius | 0,0–1,0 | 0,5 | 0 = weicher Bogen, 1 = Pirouette auf der Stelle |
+| Max. Geschwindigkeit | 0–255 | 255 | PWM-Obergrenze an die Motoren |
 
-### Deadman's Handle
+### Totmann-Schalter
 
-The ESP32 expects a command every 250ms. If the timeout expires, motors stop. The browser also sends a stop on window blur / WebSocket disconnect.
+Der ESP32 erwartet alle 250ms einen Fahrbefehl. Läuft das Timeout ab, stoppen die Motoren. Der Browser sendet beim Fokusverlust des Fensters und bei WebSocket-Verbindungsabbruch ebenfalls einen Stopp-Befehl.
 
 ---
 
-## Encoder Telemetry
+## Encoder-Telemetrie
 
-Each wheel has a 20-slot encoder disc read via hardware interrupts (`IRAM_ATTR` ISRs, `RISING` edge, `INPUT_PULLUP`). RPM is calculated every 100ms and broadcast to the browser.
+Jedes Rad hat eine Encoderscheibe mit 20 Schlitzen, ausgelesen per Hardware-Interrupt (`IRAM_ATTR` ISR, `RISING`-Flanke, `INPUT_PULLUP`). Die Drehzahl wird alle 100ms berechnet und an den Browser gesendet.
 
-RPM formula: `(pulses / slots_per_rev) / elapsed_seconds × 60`
+RPM-Formel: `(Pulse / Schlitze_pro_Umdrehung) / vergangene_Sekunden × 60`
 
 ---
 
 ## Hardware
 
-### Components
+### Komponenten
 
-| Component | Details |
-|-----------|---------|
-| Board | ESP32-S3-DEVKITC-1 (dual-core Xtensa LX7, 240 MHz, Wi-Fi, BLE) |
-| Motor driver | L298N |
-| Motors | 2× brushed DC |
-| Power | 6V battery pack |
-| Encoders | 2× single-channel wheel encoders, 20 slots/rev |
-| Battery sensor | Voltage divider (2× 10kΩ) on ADC pin — optional |
+| Bauteil | Details |
+| ------- | ------- |
+| Platine | ESP32-S3-DEVKITC-1 (Dual-Core Xtensa LX7, 240 MHz, WLAN, BLE) |
+| Motortreiber | L298N |
+| Motoren | 2× Bürstenmotor DC |
+| Stromversorgung | 6V Akkupack |
+| Encoder | 2× Einkanal-Radencoder, 20 Schlitze/Umdrehung |
+| Akkusensor | Spannungsteiler (2× 10kΩ) an ADC-Pin — optional |
 
-### Wiring
+### Verkabelung
 
 ```mermaid
 flowchart LR
@@ -150,14 +152,14 @@ flowchart LR
         ENB
     end
 
-    subgraph Motors
-        LM["Left Motor"]
-        RM["Right Motor"]
+    subgraph Motoren
+        LM["Linker Motor"]
+        RM["Rechter Motor"]
     end
 
-    subgraph Encoders
-        EncL["Left Encoder"]
-        EncR["Right Encoder"]
+    subgraph Encoder
+        EncL["Linker Encoder"]
+        EncR["Rechter Encoder"]
     end
 
     GPIO14 --> IN1
@@ -174,124 +176,123 @@ flowchart LR
     EncR --> GPIO7
 ```
 
-| L298N Pin | GPIO | Function |
-|-----------|------|----------|
-| ENA | 17 | Left motor speed (PWM) |
-| IN1 | 14 | Left motor direction A |
-| IN2 | 15 | Left motor direction B |
-| ENB | 16 | Right motor speed (PWM) |
-| IN3 | 4 | Right motor direction A |
-| IN4 | 5 | Right motor direction B |
+| L298N Pin | GPIO | Funktion |
+| --------- | ---- | -------- |
+| ENA | 17 | Linker Motor Geschwindigkeit (PWM) |
+| IN1 | 14 | Linker Motor Richtung A |
+| IN2 | 15 | Linker Motor Richtung B |
+| ENB | 16 | Rechter Motor Geschwindigkeit (PWM) |
+| IN3 | 4 | Rechter Motor Richtung A |
+| IN4 | 5 | Rechter Motor Richtung B |
 
-| Sensor | GPIO | Function |
-|--------|------|----------|
-| Left Encoder | 6 | Wheel pulse counting (interrupt-driven) |
-| Right Encoder | 7 | Wheel pulse counting (interrupt-driven) |
-| Battery divider | 8 | Voltage sensing via ADC (optional) |
+| Sensor | GPIO | Funktion |
+| ------ | ---- | -------- |
+| Linker Encoder | 6 | Radzählung per Interrupt |
+| Rechter Encoder | 7 | Radzählung per Interrupt |
+| Akkuspannungsteiler | 8 | Spannungsmessung per ADC (optional) |
 
 ---
 
-## Project Structure
+## Projektstruktur
 
 ```text
 _car/
-├── platformio.ini            # Board config, libraries, build flags
+├── platformio.ini            # Board-Konfiguration, Bibliotheken, Build-Flags
 ├── include/
-│   ├── config.h              # Pin mappings, Wi-Fi creds, tunable constants
+│   ├── config.h              # Pin-Belegung, WLAN-Zugangsdaten, Konstanten
 │   ├── motor_controller.h
 │   ├── comms_manager.h
-│   ├── encoder_monitor.h
-│   └── battery_monitor.h
+│   └── encoder_monitor.h
 ├── src/
-│   ├── main.cpp              # ESP32 entry point: HTTP server + LittleFS routes
-│   ├── motor_controller.cpp  # L298N PWM control
-│   ├── comms_manager.cpp     # WebSocket server + telemetry broadcast
-│   ├── encoder_monitor.cpp   # Interrupt-based encoder RPM
-│   └── battery_monitor.cpp   # ADC voltage reading
-├── data/                     # Uploaded to LittleFS via `pio run -t uploadfs`
-│   ├── index.html            # Full web UI (JS control loop, joystick, viz, telemetry)
-│   ├── favicon.ico           # Browser tab icon
-│   └── icon.png              # App icon (header + apple-touch-icon)
+│   ├── main.cpp              # Einstiegspunkt: HTTP-Server + LittleFS-Routen
+│   ├── motor_controller.cpp  # L298N PWM-Steuerung
+│   ├── comms_manager.cpp     # WebSocket-Server + Telemetrie-Broadcast
+│   └── encoder_monitor.cpp   # Interrupt-basierte Encoder-RPM-Berechnung
+├── data/                     # Wird per `pio run -t uploadfs` auf LittleFS übertragen
+│   ├── index.html            # Komplette Weboberfläche (JS-Steuerung, Joystick, Telemetrie)
+│   ├── favicon.ico           # Browser-Tab-Symbol
+│   └── icon.png              # App-Icon (Header + Apple Touch Icon)
 └── README.md
 ```
 
-### ESP32 Config ([`include/config.h`](include/config.h))
+### ESP32-Konfiguration ([`include/config.h`](include/config.h))
 
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `WIFI_SSID` / `WIFI_PASSWORD` | (placeholder) | Wi-Fi credentials |
-| `WEBSOCKET_PORT` | 81 | WebSocket server port |
-| `DEADMAN_TIMEOUT_MS` | 250 | Stop motors after this many ms without a command |
-| `TELEMETRY_INTERVAL_MS` | 100 | Encoder RPM broadcast interval |
-| `ENCODER_SLOTS` | 20 | Slots per encoder disc revolution |
-| `PWM_FREQUENCY` | 1000 | Motor PWM frequency (Hz) |
-| `PWM_RESOLUTION` | 8 | PWM resolution (bits, 0–255) |
-| `MOTOR_LEFT_*` / `MOTOR_RIGHT_*` | see file | GPIO pin assignments |
-| `ENCODER_LEFT` / `ENCODER_RIGHT` | 6, 7 | Encoder GPIO pins |
-| `BATTERY_ADC_PIN` | 8 | GPIO for voltage divider output |
-| `BATTERY_DIVIDER_RATIO` | 2.0 | Voltage multiplier (matches resistor ratio) |
-| `BATTERY_FULL_VOLTAGE` | 6.0 | 100% charge voltage |
-| `BATTERY_LOW_VOLTAGE` | 4.5 | Low battery warning threshold |
+| Einstellung | Standard | Bedeutung |
+| ----------- | -------- | --------- |
+| `WIFI_SSID` / `WIFI_PASSWORD` | (Platzhalter) | WLAN-Zugangsdaten |
+| `STATIC_IP` / `STATIC_GATEWAY` / `STATIC_SUBNET` / `STATIC_DNS` | gesetzt | Statische IP — alle vier auskommentieren für DHCP |
+| `WEBSOCKET_PORT` | 81 | WebSocket-Server-Port |
+| `DEADMAN_TIMEOUT_MS` | 250 | Motoren stoppen nach dieser Zeit ohne Befehl (ms) |
+| `TELEMETRY_INTERVAL_MS` | 100 | Sendeintervall für Encoder-RPM (ms) |
+| `ENCODER_SLOTS` | 20 | Schlitze pro Encoderscheibenumdrehung |
+| `PWM_FREQUENCY` | 1000 | Motor-PWM-Frequenz (Hz) |
+| `PWM_RESOLUTION` | 8 | PWM-Auflösung (Bit, 0–255) |
+| `MOTOR_LEFT_*` / `MOTOR_RIGHT_*` | siehe Datei | GPIO-Pin-Belegung der Motoren |
+| `ENCODER_LEFT` / `ENCODER_RIGHT` | 6, 7 | GPIO-Pins der Encoder |
+| `BATTERY_ADC_PIN` | 8 | GPIO für den Spannungsteilerausgang *(reserviert, SW noch nicht implementiert)* |
+| `BATTERY_DIVIDER_RATIO` | 2,0 | Spannungsmultiplikator *(reserviert)* |
+| `BATTERY_FULL_VOLTAGE` | 6,0 | Spannung bei vollem Akku *(reserviert)* |
+| `BATTERY_LOW_VOLTAGE` | 4,5 | Schwellwert für Niedrigakku-Warnung *(reserviert)* |
 
-### Web UI Features
+### Funktionen der Weboberfläche
 
-- **Virtual joystick** — drag for 360° analog control (mouse + touch), unit circle clamped
-- **WASD controls** — keyboard or on-screen buttons
-- **Car top-down view** — rear wheels light green (forward) / red (backward)
-- **Direction arrow** — rotates to show movement direction
-- **Motor PWM bars** — real-time left/right PWM values
-- **RPM display** — live encoder telemetry per wheel
-- **Battery indicator** — voltage bar + low battery warning (auto-hides if not wired)
-- **Config sliders** — acceleration, turn sharpness, max speed (applied live)
-- **Console log** — connection events, config changes, warnings (color-coded)
-- **Auto-reconnect** — browser reconnects on WebSocket disconnect
-- **Safety** — window blur sends stop command
+- **Virtueller Joystick** — ziehen für 360°-Analogsteuerung (Maus + Touch), auf Einheitskreis begrenzt
+- **WASD-Steuerung** — Tastatur oder Bildschirmtasten
+- **Auto-Draufsicht** — Hinterräder leuchten grün (vorwärts) / rot (rückwärts)
+- **Richtungspfeil** — dreht sich entsprechend der Fahrtrichtung
+- **Motor-PWM-Balken** — Echtzeit-Anzeige der Motorwerte links/rechts
+- **RPM-Anzeige** — Live-Telemetrie beider Räder
+- **Akkuanzeige** — Spannungsbalken + Niedrigakku-Warnung (blendet sich aus wenn nicht angeschlossen)
+- **Einstellregler** — Beschleunigung, Kurvenradius, Maximalgeschwindigkeit (sofort wirksam)
+- **Konsolenlog** — Verbindungsereignisse, Konfigurationsänderungen, Warnungen (farbkodiert)
+- **Auto-Reconnect** — Browser verbindet sich bei WebSocket-Unterbrechung automatisch neu
+- **Sicherheit** — Fokusverlust des Fensters sendet Stopp-Befehl
 
 ---
 
-## Development
+## Entwicklung
 
-### Tooling
+### Werkzeuge
 
-- [VS Code](https://code.visualstudio.com/) + [PlatformIO](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide) — Build, upload, serial monitor
+- [VS Code](https://code.visualstudio.com/) + [PlatformIO](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide) — Bauen, Flashen, Serieller Monitor
 
-### Workflow
+### Arbeitsablauf
 
-| Action                    | Command                             |
-|---------------------------|-------------------------------------|
-| Build firmware            | `pio run`                           |
-| Upload firmware           | `pio run -t upload`                 |
-| Upload web UI (LittleFS)  | `pio run -t uploadfs`               |
-| Serial monitor            | `pio device monitor` (115200 baud)  |
+| Aktion                          | Befehl                              |
+|---------------------------------|-------------------------------------|
+| Firmware bauen                  | `pio run`                           |
+| Firmware flashen                | `pio run -t upload`                 |
+| Weboberfläche flashen (LittleFS)| `pio run -t uploadfs`               |
+| Serieller Monitor               | `pio device monitor` (115200 Baud)  |
 
-### Libraries (ESP32)
+### Bibliotheken (ESP32)
 
-| Library                                                              | Purpose                          |
-|----------------------------------------------------------------------|----------------------------------|
-| [WebSockets](https://github.com/Links2004/arduinoWebSockets) ^2.6.1  | WebSocket server on port 81      |
-| Arduino `WebServer` (built-in)                                       | HTTP server on port 80           |
-| `LittleFS` (built-in)                                                | Serves web UI files from flash   |
+| Bibliothek                                                           | Zweck                                   |
+|----------------------------------------------------------------------|-----------------------------------------|
+| [WebSockets](https://github.com/Links2004/arduinoWebSockets) ^2.6.1  | WebSocket-Server auf Port 81            |
+| Arduino `WebServer` (integriert)                                     | HTTP-Server auf Port 80                 |
+| `LittleFS` (integriert)                                              | Weboberflächen-Dateien aus dem Flash    |
 
 ---
 
 ## Roadmap
 
-- [x] **Phase 1** — Motor wiring test
-- [x] **Phase 2** — WebSocket server on ESP32
-- [x] **Phase 3** — Python PC controller (WASD over WebSocket)
-- [x] **Phase 3.5** — Web UI via FastAPI + browser dashboard
-- [x] **Phase 4** — Migrate web UI to ESP32-hosted LittleFS (no PC needed)
-- [x] **Code refactor** — MotorController, CommsManager, EncoderMonitor service classes
-- [x] **Smooth control** — Vector model, acceleration ramp, differential mixing, virtual joystick
-- [x] **Encoder telemetry** — Interrupt-based RPM, broadcast to browser
-- [x] **Battery monitoring** — ADC voltage divider, low-battery warning in UI
-- [x] **Icons** — favicon.ico + icon.png served from LittleFS
-- [ ] **Closed-loop control** — PID speed matching (left = right) via encoder feedback
+- [x] **Phase 1** — Motor-Verkabelungstest
+- [x] **Phase 2** — WebSocket-Server auf ESP32
+- [x] **Phase 3** — Python-PC-Controller (WASD über WebSocket)
+- [x] **Phase 3.5** — Weboberfläche über FastAPI + Browser-Dashboard
+- [x] **Phase 4** — Weboberfläche auf ESP32 (LittleFS) — kein PC mehr nötig
+- [x] **Code-Refactoring** — MotorController, CommsManager, EncoderMonitor als Serviceklassen
+- [x] **Sanfte Steuerung** — Vektormodell, Beschleunigungsrampe, Differentialmischung, virtueller Joystick
+- [x] **Encoder-Telemetrie** — Interrupt-basierte RPM, Übertragung an Browser
+- [ ] **Akkuüberwachung** — Hardware (Spannungsteiler GPIO8) vorhanden, Software noch nicht implementiert
+- [x] **Icons** — favicon.ico + icon.png aus LittleFS
+- [ ] **Closed-Loop-Regelung** — PID-Drehzahlabgleich (links = rechts) per Encoder-Feedback
 
 ---
 
-## Useful Links
+## Nützliche Links
 
-- [ESP32-S3-DEVKITC-1 docs](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/hw-reference/esp32s3/user-guide-devkitc-1.html)
-- [Arduino-ESP32 docs](https://docs.espressif.com/projects/arduino-esp32/en/latest/)
-- [PlatformIO ESP32-S3 boards](https://docs.platformio.org/en/latest/boards/espressif32/esp32-s3-devkitc-1.html)
+- [ESP32-S3-DEVKITC-1 Dokumentation](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/hw-reference/esp32s3/user-guide-devkitc-1.html)
+- [Arduino-ESP32 Dokumentation](https://docs.espressif.com/projects/arduino-esp32/en/latest/)
+- [PlatformIO ESP32-S3 Boards](https://docs.platformio.org/en/latest/boards/espressif32/esp32-s3-devkitc-1.html)

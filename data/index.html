@@ -297,17 +297,17 @@
     <!-- Config sliders -->
     <div class="config-panel">
       <div class="config-item">
-        <label>Acceleration</label>
+        <label for="sliderAccel">Acceleration</label>
         <input type="range" id="sliderAccel" min="0.1" max="2.0" step="0.1" value="0.5" />
         <span class="config-val" id="valAccel">0.5s</span>
       </div>
       <div class="config-item">
-        <label>Turn Sharpness</label>
+        <label for="sliderTurn">Turn Sharpness</label>
         <input type="range" id="sliderTurn" min="0" max="1.0" step="0.05" value="0.5" />
         <span class="config-val" id="valTurn">0.50</span>
       </div>
       <div class="config-item">
-        <label>Max Speed</label>
+        <label for="sliderSpeed">Max Speed</label>
         <input type="range" id="sliderSpeed" min="0" max="255" step="5" value="255" />
         <span class="config-val" id="valSpeed">255</span>
       </div>
@@ -322,174 +322,241 @@
 </div>
 
 <script>
-// --- State ---
-let ws;
+// =============================================================================
+// ZUSTAND — Variablen die das Programm sich merken muss
+// =============================================================================
+
+let ws; // Die WebSocket-Verbindung zum ESP32 (wird in connectWs() erstellt)
+
+// Welche Tasten gerade gedrückt sind (z.B. {'w', 'd'})
 const keysDown = new Set();
+
+// Joystick-Vektor: wohin der Nutzer gerade zieht (x/y je -1 bis +1)
 const joystickVector = { x: 0, y: 0 };
+
+// Zielvektor: wo das Auto hinfahren soll (kommt von Tastatur oder Joystick)
 const targetVector = { x: 0, y: 0 };
+
+// Aktueller Vektor: wo das Auto gerade "ist" — wird sanft zum Ziel bewegt (Rampe)
 const currentVector = { x: 0, y: 0 };
-let lastControlTime = performance.now();
-let joystickActive = false;
 
-// Config (tunable from sliders)
-let accelTime = 0.5;
-let turnSharpness = 0.5;
-let maxSpeed = 255;
+let lastControlTime = performance.now(); // Zeitstempel des letzten Steuer-Ticks
+let joystickActive = false;              // true wenn der Nutzer den Joystick berührt
 
-// DOM refs
-const logEl = document.getElementById('logContent');
+// Einstellwerte — werden über die Schieberegler live verändert
+let accelTime     = 0.5;  // Beschleunigungszeit in Sekunden (wie schnell auf Vollgas)
+let turnSharpness = 0.5;  // Kurvenradius: 0 = weicher Bogen, 1 = Pirouette auf der Stelle
+let maxSpeed      = 255;  // Maximale PWM-Ausgabe (0–255)
+
+// Referenzen auf HTML-Elemente — einmal holen, öfter nutzen
+const logEl   = document.getElementById('logContent');
 const dirArrow = document.getElementById('dirArrow');
-const dotEsp = document.getElementById('dotEsp');
+const dotEsp   = document.getElementById('dotEsp');
 
-// --- Logging ---
+
+// =============================================================================
+// KONSOLE — Meldungen in die Log-Box rechts schreiben
+// =============================================================================
+
+// Schreibt eine Zeile in die Konsole. cls = Farbe: 'info', 'warn', 'error' oder leer
 function log(msg, cls) {
   const div = document.createElement('div');
   div.className = 'log-entry ' + (cls || '');
   const ts = new Date().toLocaleTimeString();
   div.textContent = '[' + ts + '] ' + msg;
   logEl.appendChild(div);
-  logEl.scrollTop = logEl.scrollHeight;
-  if (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight; // automatisch nach unten scrollen
+  // Maximal 200 Einträge behalten — sonst wird der Speicher voll
+  if (logEl.children.length > 200) logEl.firstChild.remove();
 }
 
-// --- Vector Control Model (ported from Python app.py) ---
+
+// =============================================================================
+// STEUERMODELL — Tasten/Joystick → Vektor → Motoren
+// Funktioniert wie ein 2D-Joystick: x = links/rechts, y = vor/zurück
+// =============================================================================
+
+// Wandelt gedrückte WASD-Tasten in einen Richtungsvektor um
+// W = vorwärts (y+1), S = rückwärts (y-1), A = links (x-1), D = rechts (x+1)
 function keysToVector() {
   let x = 0, y = 0;
   if (keysDown.has('w')) y += 1;
   if (keysDown.has('s')) y -= 1;
   if (keysDown.has('a')) x -= 1;
   if (keysDown.has('d')) x += 1;
+  // Auf maximal ±1 begrenzen (wichtig bei diagonaler Fahrt W+D gleichzeitig)
   return [Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y))];
 }
 
+// Bestimmt den Zielvektor: Joystick hat Vorrang, sonst Tastatur
 function computeTarget() {
   if (Math.abs(joystickVector.x) > 0.01 || Math.abs(joystickVector.y) > 0.01) {
+    // Joystick wird benutzt → dessen Wert nehmen
     targetVector.x = joystickVector.x;
     targetVector.y = joystickVector.y;
   } else {
+    // Kein Joystick → Tastaturtasten auswerten
     const kv = keysToVector();
     targetVector.x = kv[0];
     targetVector.y = kv[1];
   }
 }
 
+// Bewegt den aktuellen Vektor sanft in Richtung Zielvektor (Beschleunigungsrampe)
+// dt = vergangene Zeit in Sekunden seit letztem Aufruf
+// Je kleiner accelTime, desto schneller wird der Zielwert erreicht
 function rampTowardTarget(dt) {
-  const rate = dt / Math.max(accelTime, 0.01);
+  const rate = dt / Math.max(accelTime, 0.01); // Schrittgröße pro Tick
   for (const axis of ['x', 'y']) {
     const diff = targetVector[axis] - currentVector[axis];
     if (Math.abs(diff) < rate) {
-      currentVector[axis] = targetVector[axis];
+      currentVector[axis] = targetVector[axis]; // Ziel erreicht — einrasten
     } else {
-      currentVector[axis] += rate * (diff > 0 ? 1 : -1);
+      currentVector[axis] += rate * (diff > 0 ? 1 : -1); // Schritt in Richtung Ziel
     }
   }
 }
 
+// Rechnet den Vektor in links/rechts Motor-PWM um (Differentialantrieb-Formel)
+// links  = y + x × turnSharpness
+// rechts = y - x × turnSharpness
+// Ergebnis: ganzzahlige PWM-Werte -255 bis +255
 function mixToMotors() {
   const x = currentVector.x;
   const y = currentVector.y;
-  let leftF = y + x * turnSharpness;
+  let leftF  = y + x * turnSharpness;
   let rightF = y - x * turnSharpness;
-  leftF = Math.max(-1, Math.min(1, leftF));
+  // Auf ±1 begrenzen (kann bei gleichzeitig vollem y und x überschritten werden)
+  leftF  = Math.max(-1, Math.min(1, leftF));
   rightF = Math.max(-1, Math.min(1, rightF));
   return [Math.round(leftF * maxSpeed), Math.round(rightF * maxSpeed)];
 }
 
-// --- Control Loop (50ms, same as FastAPI had) ---
+
+// =============================================================================
+// STEUER-SCHLEIFE — läuft alle 50ms automatisch
+// Berechnet Motorwerte und schickt sie per WebSocket an den ESP32
+// =============================================================================
+
 setInterval(function() {
   const now = performance.now();
-  const dt = (now - lastControlTime) / 1000;
+  const dt = (now - lastControlTime) / 1000; // vergangene Zeit in Sekunden
   lastControlTime = now;
 
-  computeTarget();
-  rampTowardTarget(dt);
+  computeTarget();       // Ziel aus Eingabe berechnen
+  rampTowardTarget(dt);  // sanft zum Ziel bewegen
   const mr = mixToMotors();
   const left = mr[0], right = mr[1];
 
-  // Send to ESP32
+  // Fahrbefehl als Text an ESP32 schicken: "links,rechts" z.B. "200,-150"
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(left + ',' + right);
   }
 
-  // Update UI
+  // Anzeige im Browser aktualisieren
   updateViz(left, right);
 }, 50);
 
-// --- WebSocket (direct to ESP32) ---
+
+// =============================================================================
+// WEBSOCKET — Verbindung zum ESP32
+// Der Browser verbindet sich direkt auf Port 81 des ESP32
+// =============================================================================
+
 function connectWs() {
+  // IP-Adresse automatisch aus der Browser-URL lesen (gleicher Host wie die Webseite)
   const host = location.hostname;
   const url = 'ws://' + host + ':81';
-  log('Connecting to ' + url + '...', 'info');
+  log('Verbinde mit ' + url + '...', 'info');
   ws = new WebSocket(url);
 
+  // Verbindung erfolgreich aufgebaut
   ws.onopen = function() {
-    dotEsp.classList.add('on');
-    log('Connected to ESP32', 'info');
+    dotEsp.classList.add('on'); // grüner Punkt im Header
+    log('Verbunden mit ESP32', 'info');
   };
 
+  // Verbindung getrennt → nach 3 Sekunden neu versuchen
   ws.onclose = function() {
     dotEsp.classList.remove('on');
-    log('Disconnected from ESP32', 'error');
+    log('Verbindung zum ESP32 verloren', 'error');
     setTimeout(connectWs, 3000);
   };
 
   ws.onerror = function() {
-    log('WebSocket error', 'error');
+    log('WebSocket Fehler', 'error');
   };
 
-  // Receive telemetry from ESP32: "T:leftRPM,rightRPM" or "T:leftRPM,rightRPM,batteryV"
+  // Telemetrie vom ESP32 empfangen
+  // Format: "T:linksRPM,rechtsRPM" — z.B. "T:142.3,138.7"
   ws.onmessage = function(e) {
     var msg = e.data;
     if (typeof msg === 'string' && msg.indexOf('T:') === 0) {
-      var parts = msg.substring(2).split(',');
+      var parts = msg.substring(2).split(','); // "T:" abschneiden, dann aufteilen
       if (parts.length >= 2) {
-        document.getElementById('leftRpm').textContent = parseFloat(parts[0]).toFixed(1);
-        document.getElementById('rightRpm').textContent = parseFloat(parts[1]).toFixed(1);
+        // RPM-Werte in der Anzeige aktualisieren
+        document.getElementById('leftRpm').textContent  = Number.parseFloat(parts[0]).toFixed(1);
+        document.getElementById('rightRpm').textContent = Number.parseFloat(parts[1]).toFixed(1);
       }
       if (parts.length >= 3) {
-        updateBattery(parseFloat(parts[2]));
+        // Optionaler dritter Wert = Akkuspannung in Volt
+        updateBattery(Number.parseFloat(parts[2]));
       }
     }
   };
 }
 
-// --- Config Sliders ---
+
+// =============================================================================
+// SCHIEBEREGLER — Fahrparameter live einstellen
+// =============================================================================
+
 function updateConfig() {
-  accelTime = parseFloat(document.getElementById('sliderAccel').value);
-  turnSharpness = parseFloat(document.getElementById('sliderTurn').value);
-  maxSpeed = parseInt(document.getElementById('sliderSpeed').value);
+  accelTime     = Number.parseFloat(document.getElementById('sliderAccel').value);
+  turnSharpness = Number.parseFloat(document.getElementById('sliderTurn').value);
+  maxSpeed      = Number.parseInt(document.getElementById('sliderSpeed').value);
+  // Aktuelle Werte neben den Schiebereglern anzeigen
   document.getElementById('valAccel').textContent = accelTime.toFixed(1) + 's';
-  document.getElementById('valTurn').textContent = turnSharpness.toFixed(2);
+  document.getElementById('valTurn').textContent  = turnSharpness.toFixed(2);
   document.getElementById('valSpeed').textContent = maxSpeed;
-  log('Config: accel=' + accelTime + 's, turn=' + turnSharpness.toFixed(2) + ', speed=' + maxSpeed, 'warn');
+  log('Einstellungen: Beschl.=' + accelTime + 's, Kurve=' + turnSharpness.toFixed(2) + ', Speed=' + maxSpeed, 'warn');
 }
+// Bei jeder Bewegung eines Schiebereglers sofort anwenden
 document.getElementById('sliderAccel').addEventListener('input', updateConfig);
 document.getElementById('sliderTurn').addEventListener('input', updateConfig);
 document.getElementById('sliderSpeed').addEventListener('input', updateConfig);
 
-// --- Visualization ---
+
+// =============================================================================
+// VISUALISIERUNG — Anzeige im Browser aktualisieren
+// =============================================================================
+
+// Hauptfunktion: aktualisiert alle visuellen Elemente mit den aktuellen Motorwerten
 function updateViz(left, right) {
-  document.getElementById('leftVal').textContent = left;
+  // PWM-Zahlenwerte anzeigen
+  document.getElementById('leftVal').textContent  = left;
   document.getElementById('rightVal').textContent = right;
 
-  var leftBar = document.getElementById('leftBar');
+  // Balkenanzeige: Breite = Stärke, Farbe = Richtung (grün = vor, rot = zurück)
+  var leftBar  = document.getElementById('leftBar');
   var rightBar = document.getElementById('rightBar');
-  leftBar.style.width = (Math.abs(left) / 255 * 100) + '%';
+  leftBar.style.width  = (Math.abs(left)  / 255 * 100) + '%';
   rightBar.style.width = (Math.abs(right) / 255 * 100) + '%';
-  leftBar.style.background = left >= 0 ? '#2ecc71' : '#e74c3c';
+  leftBar.style.background  = left  >= 0 ? '#2ecc71' : '#e74c3c';
   rightBar.style.background = right >= 0 ? '#2ecc71' : '#e74c3c';
 
+  // Hinterräder einfärben (Vorderräder bleiben neutral — kein Antrieb)
   updateWheel('whRL', left);
   updateWheel('whRR', right);
   document.getElementById('whFL').className = 'wheel wh-fl';
   document.getElementById('whFR').className = 'wheel wh-fr';
 
-  // WASD button highlights
+  // WASD-Buttons leuchten wenn die entsprechende Taste gedrückt ist
   ['w','a','s','d'].forEach(function(k) {
     document.getElementById('btn' + k.toUpperCase()).classList.toggle('active', keysDown.has(k));
   });
 
-  // Joystick knob mirrors current vector when not dragging
+  // Joystick-Knopf spiegelt den aktuellen Vektor wider (wenn nicht aktiv gezogen)
   if (!joystickActive) {
     positionKnob(currentVector.x, currentVector.y, false);
   }
@@ -497,79 +564,102 @@ function updateViz(left, right) {
   updateDirectionArrow(left, right);
 }
 
+// Färbt ein Rad ein und zeigt Pfeil-Richtung an
 function updateWheel(id, value) {
-  var el = document.getElementById(id);
+  var el    = document.getElementById(id);
   var arrow = el.querySelector('.wheel-arrow');
   el.className = 'wheel ' + (id === 'whRL' ? 'wh-rl' : 'wh-rr');
-  if (value > 0) { el.classList.add('active-fwd'); arrow.innerHTML = '&#9650;'; }
-  else if (value < 0) { el.classList.add('active-bwd'); arrow.innerHTML = '&#9660;'; }
+  if (value > 0)      { el.classList.add('active-fwd'); arrow.innerHTML = '&#9650;'; } // grün, Pfeil hoch
+  else if (value < 0) { el.classList.add('active-bwd'); arrow.innerHTML = '&#9660;'; } // rot, Pfeil runter
 }
 
+// Dreht den Richtungspfeil je nach Fahrrichtung
 function updateDirectionArrow(left, right) {
   if (left === 0 && right === 0) {
-    dirArrow.classList.add('hidden');
+    dirArrow.classList.add('hidden'); // Stillstand → Pfeil ausblenden
     dirArrow.style.transform = 'rotate(0deg)';
     return;
   }
   dirArrow.classList.remove('hidden');
-  var angle = 0;
-  if (left > 0 && right > 0) angle = 0;
-  else if (left < 0 && right < 0) angle = 180;
-  else if (left < 0 && right > 0) angle = -90;
-  else if (left > 0 && right < 0) angle = 90;
-  else if (left > right) angle = 45;
-  else if (right > left) angle = -45;
+  var angle;
+  if      (left > 0  && right > 0)  angle = 0;    // vorwärts
+  else if (left < 0  && right < 0)  angle = 180;  // rückwärts
+  else if (left < 0  && right > 0)  angle = -90;  // Pirouette links
+  else if (left > 0  && right < 0)  angle = 90;   // Pirouette rechts
+  else if (left > right)            angle = 45;   // Kurve rechts
+  else if (right > left)            angle = -45;  // Kurve links
   dirArrow.style.transform = 'rotate(' + angle + 'deg)';
 }
 
-// --- Battery ---
-var batteryGroup = document.getElementById('batteryGroup');
-var batteryFill = document.getElementById('batteryFill');
-var batteryText = document.getElementById('batteryText');
-var batteryLowLogged = false;
+
+// =============================================================================
+// AKKU-ANZEIGE — wird nur gezeigt wenn der ESP32 Spannung sendet
+// =============================================================================
+
+var batteryGroup    = document.getElementById('batteryGroup');
+var batteryFill     = document.getElementById('batteryFill');
+var batteryText     = document.getElementById('batteryText');
+var batteryLowLogged = false; // damit die Warnung nicht 20x pro Sekunde erscheint
 
 function updateBattery(voltage) {
+  // Unter 0.5V = kein Sensor angeschlossen → Anzeige verstecken
   if (!voltage || voltage < 0.5) {
     batteryGroup.style.display = 'none';
     return;
   }
   batteryGroup.style.display = 'flex';
-  var pct = Math.max(0, Math.min(100, ((voltage - 4.5) / (6.0 - 4.5)) * 100));
+
+  // Spannung in Prozent umrechnen (4.5V = 0%, 6.0V = 100%)
+  var pct = Math.max(0, Math.min(100, ((voltage - 4.5) / (6 - 4.5)) * 100));
   batteryFill.style.width = pct + '%';
-  batteryFill.className = 'battery-fill' + (pct < 20 ? ' low' : pct < 40 ? ' mid' : '');
+  // Farbe: unter 20% rot, unter 40% orange, sonst grün
+  var fillClass = '';
+  if (pct < 20)      fillClass = ' low';
+  else if (pct < 40) fillClass = ' mid';
+  batteryFill.className = 'battery-fill' + fillClass;
   batteryText.textContent = voltage.toFixed(1) + 'V';
+
+  // Einmalige Warnung bei niedrigem Akku
   if (pct < 20 && !batteryLowLogged) {
     batteryLowLogged = true;
-    log('Low battery: ' + voltage.toFixed(1) + 'V', 'error');
+    log('Akku schwach: ' + voltage.toFixed(1) + 'V', 'error');
   } else if (pct >= 20) {
-    batteryLowLogged = false;
+    batteryLowLogged = false; // zurücksetzen wenn Akku wieder ok
   }
 }
 
-// --- Virtual Joystick ---
-var joyContainer = document.getElementById('joystickContainer');
-var joyKnob = document.getElementById('joystickKnob');
 
+// =============================================================================
+// VIRTUELLER JOYSTICK — Maus und Touch-Steuerung
+// =============================================================================
+
+var joyContainer = document.getElementById('joystickContainer');
+var joyKnob      = document.getElementById('joystickKnob');
+
+// Positioniert den Knopf im Joystick-Kreis anhand normierter x/y-Werte (-1 bis +1)
 function positionKnob(nx, ny, isActive) {
-  var r = joyContainer.offsetWidth / 2;
-  var knobR = joyKnob.offsetWidth / 2;
+  var r     = joyContainer.offsetWidth / 2;  // Radius des Joystick-Kreises
+  var knobR = joyKnob.offsetWidth / 2;       // Radius des Knopfes
   joyKnob.style.left = (nx * r + r - knobR) + 'px';
-  joyKnob.style.top = (-ny * r + r - knobR) + 'px';
+  joyKnob.style.top  = (-ny * r + r - knobR) + 'px'; // y invertiert (oben = positiv)
   joyKnob.classList.toggle('active', isActive);
 }
 
+// Berechnet den Joystick-Vektor aus einer Maus/Touch-Position
 function handleJoystickInput(clientX, clientY) {
-  var rect = joyContainer.getBoundingClientRect();
-  var r = rect.width / 2;
-  var dx = (clientX - rect.left - r) / r;
-  var dy = -(clientY - rect.top - r) / r;
-  var mag = Math.sqrt(dx * dx + dy * dy);
+  var rect = joyContainer.getBoundingClientRect(); // Position des Kreises auf dem Bildschirm
+  var r    = rect.width / 2;
+  var dx   = (clientX - rect.left - r) / r; // Abstand vom Mittelpunkt, normiert auf ±1
+  var dy   = -(clientY - rect.top  - r) / r;
+  // Auf Einheitskreis begrenzen — damit diagonale Bewegung nicht schneller ist
+  var mag = Math.hypot(dx, dy);
   if (mag > 1) { dx /= mag; dy /= mag; }
   positionKnob(dx, dy, true);
-  joystickVector.x = parseFloat(dx.toFixed(2));
-  joystickVector.y = parseFloat(dy.toFixed(2));
+  joystickVector.x = Number.parseFloat(dx.toFixed(2));
+  joystickVector.y = Number.parseFloat(dy.toFixed(2));
 }
 
+// Joystick loslassen → Knopf zurück zur Mitte, Vektor auf 0
 function releaseJoystick() {
   joystickActive = false;
   positionKnob(0, 0, false);
@@ -577,7 +667,7 @@ function releaseJoystick() {
   joystickVector.y = 0;
 }
 
-// Mouse
+// Maus-Events für den Joystick
 joyContainer.addEventListener('mousedown', function(e) {
   e.preventDefault();
   joystickActive = true;
@@ -590,7 +680,7 @@ document.addEventListener('mouseup', function() {
   if (joystickActive) releaseJoystick();
 });
 
-// Touch
+// Touch-Events für Smartphone/Tablet
 joyContainer.addEventListener('touchstart', function(e) {
   e.preventDefault();
   joystickActive = true;
@@ -598,7 +688,7 @@ joyContainer.addEventListener('touchstart', function(e) {
 });
 document.addEventListener('touchmove', function(e) {
   if (joystickActive) {
-    e.preventDefault();
+    e.preventDefault(); // verhindert Scrollen während Joystick-Benutzung
     handleJoystickInput(e.touches[0].clientX, e.touches[0].clientY);
   }
 }, { passive: false });
@@ -606,23 +696,28 @@ document.addEventListener('touchend', function() {
   if (joystickActive) releaseJoystick();
 });
 
-// --- Keyboard ---
+
+// =============================================================================
+// TASTATUR — WASD-Tasten erkennen
+// =============================================================================
+
 document.addEventListener('keydown', function(e) {
+  // Keine Tasten abfangen wenn gerade ein Eingabefeld aktiv ist (z.B. IP-Feld)
   if (document.activeElement.tagName === 'INPUT') return;
   var key = e.key.toLowerCase();
-  if ('wasd'.indexOf(key) >= 0 && !keysDown.has(key)) {
+  if ('wasd'.includes(key) && !keysDown.has(key)) {
     keysDown.add(key);
   }
 });
 document.addEventListener('keyup', function(e) {
   if (document.activeElement.tagName === 'INPUT') return;
   var key = e.key.toLowerCase();
-  if ('wasd'.indexOf(key) >= 0) {
+  if ('wasd'.includes(key)) {
     keysDown.delete(key);
   }
 });
 
-// Mouse/touch WASD buttons
+// On-Screen WASD-Buttons — funktionieren mit Maus und Touch
 ['w','a','s','d'].forEach(function(key) {
   var btn = document.getElementById('btn' + key.toUpperCase());
   function down(e) {
@@ -634,21 +729,26 @@ document.addEventListener('keyup', function(e) {
     keysDown.delete(key);
   }
   btn.addEventListener('mousedown', down);
-  btn.addEventListener('mouseup', up);
-  btn.addEventListener('mouseleave', up);
+  btn.addEventListener('mouseup',   up);
+  btn.addEventListener('mouseleave', up); // Taste loslassen wenn Maus das Element verlässt
   btn.addEventListener('touchstart', down);
-  btn.addEventListener('touchend', up);
+  btn.addEventListener('touchend',   up);
 });
 
-// Stop on window blur
+// Sicherheit: Wenn das Browserfenster den Fokus verliert (z.B. Alt+Tab),
+// alle Tasten loslassen und Joystick zurücksetzen → Motoren stoppen
 window.addEventListener('blur', function() {
   keysDown.clear();
   joystickVector.x = 0;
   joystickVector.y = 0;
-  log('Window lost focus - motors stopping', 'warn');
+  log('Fenster verloren — Motoren gestoppt', 'warn');
 });
 
-// --- Start ---
+
+// =============================================================================
+// START — WebSocket-Verbindung herstellen
+// =============================================================================
+
 connectWs();
 </script>
 </body>
