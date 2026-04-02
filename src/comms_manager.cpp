@@ -33,6 +33,8 @@ void CommsManager::begin() {
     Serial.printf("\nVerbunden! IP: %s\n", WiFi.localIP().toString().c_str());
 
     // WebSocket-Server starten — Browser verbindet sich hier für Echtzeit-Steuerung
+    _lastCommandTime = millis(); // Totmann-Timer ab jetzt starten, nicht ab 0
+
     _ws = new WebSocketsServer(WEBSOCKET_PORT);
     _ws->begin();
     _ws->onEvent(eventTrampoline); // eventTrampoline leitet Events an onEvent() weiter
