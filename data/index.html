@@ -39,28 +39,6 @@
   }
   .indicator .dot.on { background: #2ecc71; box-shadow: 0 0 6px rgba(46,204,113,0.6); }
 
-  /* Battery indicator */
-  .battery {
-    display: flex; align-items: center; gap: 6px; font-size: 13px;
-    margin-left: auto; padding-left: 12px; border-left: 1px solid #2a3a4e;
-  }
-  .battery-icon {
-    width: 32px; height: 16px; border: 2px solid #888;
-    border-radius: 3px; position: relative; display: flex;
-    align-items: center; padding: 2px;
-  }
-  .battery-icon::after {
-    content: ''; position: absolute; right: -5px; top: 3px;
-    width: 3px; height: 6px; background: #888; border-radius: 0 2px 2px 0;
-  }
-  .battery-fill {
-    height: 100%; border-radius: 1px; transition: width 0.3s, background 0.3s;
-    background: #2ecc71;
-  }
-  .battery-fill.low { background: #e74c3c; }
-  .battery-fill.mid { background: #f39c12; }
-  .battery-text { font-family: 'Courier New', monospace; color: #ccc; }
-
   .main { flex: 1; display: flex; overflow: hidden; }
 
   /* Left panel */
@@ -231,10 +209,6 @@
   <h1><img src="/icon.png" alt="car">Car Controller</h1>
   <div class="status-group">
     <div class="indicator"><div class="dot" id="dotEsp"></div><span>ESP32</span></div>
-  </div>
-  <div class="battery" id="batteryGroup" style="display:none">
-    <div class="battery-icon"><div class="battery-fill" id="batteryFill" style="width:0%"></div></div>
-    <span class="battery-text" id="batteryText">--</span>
   </div>
 </header>
 
@@ -498,10 +472,6 @@ function connectWs() {
         document.getElementById('leftRpm').textContent  = Number.parseFloat(parts[0]).toFixed(1);
         document.getElementById('rightRpm').textContent = Number.parseFloat(parts[1]).toFixed(1);
       }
-      if (parts.length >= 3) {
-        // Optionaler dritter Wert = Akkuspannung in Volt
-        updateBattery(Number.parseFloat(parts[2]));
-      }
     }
   };
 }
@@ -589,43 +559,6 @@ function updateDirectionArrow(left, right) {
   else if (left > right)            angle = 45;   // Kurve rechts
   else if (right > left)            angle = -45;  // Kurve links
   dirArrow.style.transform = 'rotate(' + angle + 'deg)';
-}
-
-
-// =============================================================================
-// AKKU-ANZEIGE — wird nur gezeigt wenn der ESP32 Spannung sendet
-// =============================================================================
-
-var batteryGroup    = document.getElementById('batteryGroup');
-var batteryFill     = document.getElementById('batteryFill');
-var batteryText     = document.getElementById('batteryText');
-var batteryLowLogged = false; // damit die Warnung nicht 20x pro Sekunde erscheint
-
-function updateBattery(voltage) {
-  // Unter 0.5V = kein Sensor angeschlossen → Anzeige verstecken
-  if (!voltage || voltage < 0.5) {
-    batteryGroup.style.display = 'none';
-    return;
-  }
-  batteryGroup.style.display = 'flex';
-
-  // Spannung in Prozent umrechnen (4.5V = 0%, 6.0V = 100%)
-  var pct = Math.max(0, Math.min(100, ((voltage - 4.5) / (6 - 4.5)) * 100));
-  batteryFill.style.width = pct + '%';
-  // Farbe: unter 20% rot, unter 40% orange, sonst grün
-  var fillClass = '';
-  if (pct < 20)      fillClass = ' low';
-  else if (pct < 40) fillClass = ' mid';
-  batteryFill.className = 'battery-fill' + fillClass;
-  batteryText.textContent = voltage.toFixed(1) + 'V';
-
-  // Einmalige Warnung bei niedrigem Akku
-  if (pct < 20 && !batteryLowLogged) {
-    batteryLowLogged = true;
-    log('Akku schwach: ' + voltage.toFixed(1) + 'V', 'error');
-  } else if (pct >= 20) {
-    batteryLowLogged = false; // zurücksetzen wenn Akku wieder ok
-  }
 }
 
 

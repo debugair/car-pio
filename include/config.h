@@ -34,13 +34,6 @@
 #define STATIC_SUBNET  255,255,255,0
 #define STATIC_DNS     192,168,5,1
 
-// --- Battery Monitoring ---
-#define BATTERY_ADC_PIN        8     // GPIO for voltage divider output
-#define BATTERY_DIVIDER_RATIO  2.0   // Voltage divider multiplier (e.g. 2:1 = 2.0)
-#define BATTERY_FULL_VOLTAGE   6.0   // Fully charged voltage
-#define BATTERY_LOW_VOLTAGE    4.5   // Low battery warning threshold
-#define BATTERY_SAMPLES        16    // ADC readings to average (noise reduction)
-
 // --- Motor PWM ---
 #define PWM_FREQUENCY  1000  // Hz
 #define PWM_RESOLUTION    8  // 8-bit = 0-255
