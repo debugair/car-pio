@@ -120,6 +120,8 @@ void loop() {
 
 // main.cpp
 #include <Arduino.h>
+#include <WebServer.h>
+#include <LittleFS.h>
 #include "motor_controller.h"
 #include "encoder_monitor.h"
 #include "comms_manager.h"
@@ -127,10 +129,17 @@ void loop() {
 MotorController motors;
 EncoderMonitor encoders;
 CommsManager comms(motors, encoders);
+WebServer httpServer(80);
 
-
-
-
+void handleRoot() {
+    File f = LittleFS.open("/index.html", "r");
+    if (!f) {
+        httpServer.send(404, "text/plain", "index.html not found");
+        return;
+    }
+    httpServer.streamFile(f, "text/html");
+    f.close();
+}
 
 
 
@@ -148,6 +157,27 @@ void setup() {
     motors.begin();
     encoders.begin();
     comms.begin();
+
+    if (!LittleFS.begin()) {
+        Serial.println("LittleFS mount failed!");
+    } else {
+        Serial.println("LittleFS mounted");
+    }
+    httpServer.on("/", handleRoot);
+    httpServer.on("/favicon.ico", []() {
+        File f = LittleFS.open("/favicon.ico", "r");
+        if (!f) { httpServer.send(404); return; }
+        httpServer.streamFile(f, "image/x-icon");
+        f.close();
+    });
+    httpServer.on("/icon.png", []() {
+        File f = LittleFS.open("/icon.png", "r");
+        if (!f) { httpServer.send(404); return; }
+        httpServer.streamFile(f, "image/png");
+        f.close();
+    });
+    httpServer.begin();
+    Serial.println("HTTP server started on port 80");
 
     Serial.printf("WebSocket server started on port %d\n", WEBSOCKET_PORT);
     Serial.println("Setup done!");
@@ -169,6 +199,7 @@ void setup() {
 }
  */
 void loop() {
+    httpServer.handleClient();
     encoders.update();
     comms.loop();
     delay(1);

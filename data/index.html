@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Car Controller</title>
+<link rel="icon" href="/favicon.ico" type="image/x-icon">
+<link rel="apple-touch-icon" href="/icon.png">
+<link rel="icon" href="/icon.png" type="image/png" sizes="48x48">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+  }
+
+  /* Header */
+  header {
+    padding: 10px 20px;
+    background: #16213e;
+    border-bottom: 1px solid #0f3460;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  header h1 img { width: 28px; height: 28px; border-radius: 4px; }
+  .status-group { display: flex; gap: 12px; align-items: center; }
+  .indicator { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
+  .indicator .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #e94560; transition: background 0.3s;
+  }
+  .indicator .dot.on { background: #2ecc71; box-shadow: 0 0 6px rgba(46,204,113,0.6); }
+
+  /* Battery indicator */
+  .battery {
+    display: flex; align-items: center; gap: 6px; font-size: 13px;
+    margin-left: auto; padding-left: 12px; border-left: 1px solid #2a3a4e;
+  }
+  .battery-icon {
+    width: 32px; height: 16px; border: 2px solid #888;
+    border-radius: 3px; position: relative; display: flex;
+    align-items: center; padding: 2px;
+  }
+  .battery-icon::after {
+    content: ''; position: absolute; right: -5px; top: 3px;
+    width: 3px; height: 6px; background: #888; border-radius: 0 2px 2px 0;
+  }
+  .battery-fill {
+    height: 100%; border-radius: 1px; transition: width 0.3s, background 0.3s;
+    background: #2ecc71;
+  }
+  .battery-fill.low { background: #e74c3c; }
+  .battery-fill.mid { background: #f39c12; }
+  .battery-text { font-family: 'Courier New', monospace; color: #ccc; }
+
+  .main { flex: 1; display: flex; overflow: hidden; }
+
+  /* Left panel */
+  .viz-panel {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 20px; padding: 16px; overflow-y: auto;
+  }
+
+  /* Car top-down */
+  .car-container { position: relative; width: 180px; height: 280px; }
+  .car-body {
+    position: absolute; top: 30px; left: 25px;
+    width: 130px; height: 220px;
+    background: #2c3e6d; border-radius: 30px 30px 20px 20px;
+    border: 2px solid #4a6fa5;
+  }
+  .car-front {
+    position: absolute; top: 40px; left: 60px;
+    width: 60px; height: 10px;
+    background: #f39c12; border-radius: 4px;
+  }
+  .wheel {
+    position: absolute; width: 22px; height: 50px;
+    border-radius: 6px; background: #555; border: 2px solid #888;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.1s;
+  }
+  .wheel.active-fwd { background: #2ecc71; border-color: #27ae60; }
+  .wheel.active-bwd { background: #e74c3c; border-color: #c0392b; }
+  .wheel-arrow { font-size: 18px; color: #fff; opacity: 0; transition: opacity 0.1s; }
+  .wheel.active-fwd .wheel-arrow,
+  .wheel.active-bwd .wheel-arrow { opacity: 1; }
+  .wh-fl { top: 50px; left: 8px; }
+  .wh-fr { top: 50px; right: 8px; }
+  .wh-rl { top: 180px; left: 8px; }
+  .wh-rr { top: 180px; right: 8px; }
+
+  /* Direction arrow */
+  .direction-arrow { width: 60px; height: 60px; transition: transform 0.15s; }
+  .direction-arrow svg { width: 100%; height: 100%; }
+  .direction-arrow.hidden svg { opacity: 0.15; }
+
+  /* Middle section: joystick + WASD side by side */
+  .input-row {
+    display: flex; align-items: center; gap: 32px;
+  }
+
+  /* Virtual joystick */
+  .joystick-container {
+    width: 160px; height: 160px;
+    border-radius: 50%;
+    background: #16213e;
+    border: 2px solid #4a6fa5;
+    position: relative;
+    touch-action: none;
+    cursor: crosshair;
+  }
+  .joystick-crosshair-h, .joystick-crosshair-v {
+    position: absolute; background: #2a3a4e;
+  }
+  .joystick-crosshair-h {
+    width: 100%; height: 1px; top: 50%; left: 0;
+  }
+  .joystick-crosshair-v {
+    width: 1px; height: 100%; left: 50%; top: 0;
+  }
+  .joystick-knob {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: #4a6fa5;
+    border: 2px solid #6a8fc5;
+    position: absolute;
+    top: 58px; left: 58px;
+    pointer-events: none;
+    transition: none;
+    box-shadow: 0 0 8px rgba(74,111,165,0.4);
+  }
+  .joystick-knob.active {
+    background: #2ecc71;
+    border-color: #27ae60;
+    box-shadow: 0 0 12px rgba(46,204,113,0.5);
+  }
+
+  /* WASD */
+  .controls {
+    display: grid;
+    grid-template-columns: 56px 56px 56px;
+    grid-template-rows: 56px 56px;
+    gap: 4px;
+  }
+  .key-btn {
+    width: 56px; height: 56px;
+    border: 2px solid #4a6fa5; border-radius: 8px;
+    background: #16213e; color: #eee;
+    font-size: 20px; font-weight: bold;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.1s;
+  }
+  .key-btn:hover { border-color: #6a8fc5; }
+  .key-btn.active {
+    background: #0f3460; border-color: #2ecc71;
+    color: #2ecc71; box-shadow: 0 0 12px rgba(46,204,113,0.3);
+  }
+  .key-w { grid-column: 2; }
+  .key-a { grid-column: 1; grid-row: 2; }
+  .key-s { grid-column: 2; grid-row: 2; }
+  .key-d { grid-column: 3; grid-row: 2; }
+
+  /* Motor values */
+  .motor-values { display: flex; gap: 32px; font-size: 13px; }
+  .motor-val { text-align: center; }
+  .motor-val .label { color: #888; margin-bottom: 2px; }
+  .motor-val .value {
+    font-size: 24px; font-weight: bold;
+    font-family: 'Courier New', monospace;
+  }
+  .motor-bar {
+    width: 56px; height: 6px; background: #333;
+    border-radius: 3px; margin-top: 4px; overflow: hidden;
+  }
+  .motor-bar-fill {
+    height: 100%; border-radius: 3px;
+    transition: width 0.1s, background 0.1s;
+  }
+  .motor-val .value.rpm { color: #f39c12; font-size: 20px; }
+
+  /* Config panel */
+  .config-panel {
+    display: flex; gap: 20px; padding: 8px 16px;
+    background: #16213e; border-radius: 8px;
+    border: 1px solid #0f3460;
+  }
+  .config-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .config-item label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+  .config-item input[type="range"] {
+    width: 100px; accent-color: #2ecc71; cursor: pointer;
+  }
+  .config-item .config-val {
+    font-size: 13px; font-family: 'Courier New', monospace; color: #ccc;
+  }
+
+  /* Log panel */
+  .log-panel {
+    width: 340px; background: #0d1117;
+    border-left: 1px solid #0f3460;
+    display: flex; flex-direction: column;
+  }
+  .log-header {
+    padding: 10px 16px; font-size: 13px; font-weight: 600;
+    color: #888; border-bottom: 1px solid #1a2332;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .log-content {
+    flex: 1; overflow-y: auto; padding: 8px 12px;
+    font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6;
+  }
+  .log-entry { color: #7f8c8d; }
+  .log-entry.info { color: #3498db; }
+  .log-entry.cmd { color: #555; }
+  .log-entry.warn { color: #f39c12; }
+  .log-entry.error { color: #e74c3c; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><img src="/icon.png" alt="car">Car Controller</h1>
+  <div class="status-group">
+    <div class="indicator"><div class="dot" id="dotEsp"></div><span>ESP32</span></div>
+  </div>
+  <div class="battery" id="batteryGroup" style="display:none">
+    <div class="battery-icon"><div class="battery-fill" id="batteryFill" style="width:0%"></div></div>
+    <span class="battery-text" id="batteryText">--</span>
+  </div>
+</header>
+
+<div class="main">
+  <div class="viz-panel">
+
+    <div class="direction-arrow hidden" id="dirArrow">
+      <svg viewBox="0 0 100 100">
+        <polygon points="50,10 80,60 65,60 65,90 35,90 35,60 20,60" fill="#2ecc71" />
+      </svg>
+    </div>
+
+    <div class="car-container">
+      <div class="car-body"></div>
+      <div class="car-front"></div>
+      <div class="wheel wh-fl" id="whFL"><span class="wheel-arrow">&#9650;</span></div>
+      <div class="wheel wh-fr" id="whFR"><span class="wheel-arrow">&#9650;</span></div>
+      <div class="wheel wh-rl" id="whRL"><span class="wheel-arrow">&#9650;</span></div>
+      <div class="wheel wh-rr" id="whRR"><span class="wheel-arrow">&#9650;</span></div>
+    </div>
+
+    <div class="motor-values">
+      <div class="motor-val">
+        <div class="label">Left PWM</div>
+        <div class="value" id="leftVal">0</div>
+        <div class="motor-bar"><div class="motor-bar-fill" id="leftBar"></div></div>
+      </div>
+      <div class="motor-val">
+        <div class="label">Left RPM</div>
+        <div class="value rpm" id="leftRpm">0</div>
+      </div>
+      <div class="motor-val">
+        <div class="label">Right RPM</div>
+        <div class="value rpm" id="rightRpm">0</div>
+      </div>
+      <div class="motor-val">
+        <div class="label">Right PWM</div>
+        <div class="value" id="rightVal">0</div>
+        <div class="motor-bar"><div class="motor-bar-fill" id="rightBar"></div></div>
+      </div>
+    </div>
+
+    <div class="input-row">
+      <!-- Virtual Joystick -->
+      <div class="joystick-container" id="joystickContainer">
+        <div class="joystick-crosshair-h"></div>
+        <div class="joystick-crosshair-v"></div>
+        <div class="joystick-knob" id="joystickKnob"></div>
+      </div>
+
+      <!-- WASD -->
+      <div class="controls">
+        <div class="key-btn key-w" id="btnW">W</div>
+        <div class="key-btn key-a" id="btnA">A</div>
+        <div class="key-btn key-s" id="btnS">S</div>
+        <div class="key-btn key-d" id="btnD">D</div>
+      </div>
+    </div>
+
+    <!-- Config sliders -->
+    <div class="config-panel">
+      <div class="config-item">
+        <label>Acceleration</label>
+        <input type="range" id="sliderAccel" min="0.1" max="2.0" step="0.1" value="0.5" />
+        <span class="config-val" id="valAccel">0.5s</span>
+      </div>
+      <div class="config-item">
+        <label>Turn Sharpness</label>
+        <input type="range" id="sliderTurn" min="0" max="1.0" step="0.05" value="0.5" />
+        <span class="config-val" id="valTurn">0.50</span>
+      </div>
+      <div class="config-item">
+        <label>Max Speed</label>
+        <input type="range" id="sliderSpeed" min="0" max="255" step="5" value="255" />
+        <span class="config-val" id="valSpeed">255</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="log-panel">
+    <div class="log-header">Console</div>
+    <div class="log-content" id="logContent"></div>
+  </div>
+</div>
+
+<script>
+// --- State ---
+let ws;
+const keysDown = new Set();
+const joystickVector = { x: 0, y: 0 };
+const targetVector = { x: 0, y: 0 };
+const currentVector = { x: 0, y: 0 };
+let lastControlTime = performance.now();
+let joystickActive = false;
+
+// Config (tunable from sliders)
+let accelTime = 0.5;
+let turnSharpness = 0.5;
+let maxSpeed = 255;
+
+// DOM refs
+const logEl = document.getElementById('logContent');
+const dirArrow = document.getElementById('dirArrow');
+const dotEsp = document.getElementById('dotEsp');
+
+// --- Logging ---
+function log(msg, cls) {
+  const div = document.createElement('div');
+  div.className = 'log-entry ' + (cls || '');
+  const ts = new Date().toLocaleTimeString();
+  div.textContent = '[' + ts + '] ' + msg;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+  if (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+}
+
+// --- Vector Control Model (ported from Python app.py) ---
+function keysToVector() {
+  let x = 0, y = 0;
+  if (keysDown.has('w')) y += 1;
+  if (keysDown.has('s')) y -= 1;
+  if (keysDown.has('a')) x -= 1;
+  if (keysDown.has('d')) x += 1;
+  return [Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y))];
+}
+
+function computeTarget() {
+  if (Math.abs(joystickVector.x) > 0.01 || Math.abs(joystickVector.y) > 0.01) {
+    targetVector.x = joystickVector.x;
+    targetVector.y = joystickVector.y;
+  } else {
+    const kv = keysToVector();
+    targetVector.x = kv[0];
+    targetVector.y = kv[1];
+  }
+}
+
+function rampTowardTarget(dt) {
+  const rate = dt / Math.max(accelTime, 0.01);
+  for (const axis of ['x', 'y']) {
+    const diff = targetVector[axis] - currentVector[axis];
+    if (Math.abs(diff) < rate) {
+      currentVector[axis] = targetVector[axis];
+    } else {
+      currentVector[axis] += rate * (diff > 0 ? 1 : -1);
+    }
+  }
+}
+
+function mixToMotors() {
+  const x = currentVector.x;
+  const y = currentVector.y;
+  let leftF = y + x * turnSharpness;
+  let rightF = y - x * turnSharpness;
+  leftF = Math.max(-1, Math.min(1, leftF));
+  rightF = Math.max(-1, Math.min(1, rightF));
+  return [Math.round(leftF * maxSpeed), Math.round(rightF * maxSpeed)];
+}
+
+// --- Control Loop (50ms, same as FastAPI had) ---
+setInterval(function() {
+  const now = performance.now();
+  const dt = (now - lastControlTime) / 1000;
+  lastControlTime = now;
+
+  computeTarget();
+  rampTowardTarget(dt);
+  const mr = mixToMotors();
+  const left = mr[0], right = mr[1];
+
+  // Send to ESP32
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(left + ',' + right);
+  }
+
+  // Update UI
+  updateViz(left, right);
+}, 50);
+
+// --- WebSocket (direct to ESP32) ---
+function connectWs() {
+  const host = location.hostname;
+  const url = 'ws://' + host + ':81';
+  log('Connecting to ' + url + '...', 'info');
+  ws = new WebSocket(url);
+
+  ws.onopen = function() {
+    dotEsp.classList.add('on');
+    log('Connected to ESP32', 'info');
+  };
+
+  ws.onclose = function() {
+    dotEsp.classList.remove('on');
+    log('Disconnected from ESP32', 'error');
+    setTimeout(connectWs, 3000);
+  };
+
+  ws.onerror = function() {
+    log('WebSocket error', 'error');
+  };
+
+  // Receive telemetry from ESP32: "T:leftRPM,rightRPM" or "T:leftRPM,rightRPM,batteryV"
+  ws.onmessage = function(e) {
+    var msg = e.data;
+    if (typeof msg === 'string' && msg.indexOf('T:') === 0) {
+      var parts = msg.substring(2).split(',');
+      if (parts.length >= 2) {
+        document.getElementById('leftRpm').textContent = parseFloat(parts[0]).toFixed(1);
+        document.getElementById('rightRpm').textContent = parseFloat(parts[1]).toFixed(1);
+      }
+      if (parts.length >= 3) {
+        updateBattery(parseFloat(parts[2]));
+      }
+    }
+  };
+}
+
+// --- Config Sliders ---
+function updateConfig() {
+  accelTime = parseFloat(document.getElementById('sliderAccel').value);
+  turnSharpness = parseFloat(document.getElementById('sliderTurn').value);
+  maxSpeed = parseInt(document.getElementById('sliderSpeed').value);
+  document.getElementById('valAccel').textContent = accelTime.toFixed(1) + 's';
+  document.getElementById('valTurn').textContent = turnSharpness.toFixed(2);
+  document.getElementById('valSpeed').textContent = maxSpeed;
+  log('Config: accel=' + accelTime + 's, turn=' + turnSharpness.toFixed(2) + ', speed=' + maxSpeed, 'warn');
+}
+document.getElementById('sliderAccel').addEventListener('input', updateConfig);
+document.getElementById('sliderTurn').addEventListener('input', updateConfig);
+document.getElementById('sliderSpeed').addEventListener('input', updateConfig);
+
+// --- Visualization ---
+function updateViz(left, right) {
+  document.getElementById('leftVal').textContent = left;
+  document.getElementById('rightVal').textContent = right;
+
+  var leftBar = document.getElementById('leftBar');
+  var rightBar = document.getElementById('rightBar');
+  leftBar.style.width = (Math.abs(left) / 255 * 100) + '%';
+  rightBar.style.width = (Math.abs(right) / 255 * 100) + '%';
+  leftBar.style.background = left >= 0 ? '#2ecc71' : '#e74c3c';
+  rightBar.style.background = right >= 0 ? '#2ecc71' : '#e74c3c';
+
+  updateWheel('whRL', left);
+  updateWheel('whRR', right);
+  document.getElementById('whFL').className = 'wheel wh-fl';
+  document.getElementById('whFR').className = 'wheel wh-fr';
+
+  // WASD button highlights
+  ['w','a','s','d'].forEach(function(k) {
+    document.getElementById('btn' + k.toUpperCase()).classList.toggle('active', keysDown.has(k));
+  });
+
+  // Joystick knob mirrors current vector when not dragging
+  if (!joystickActive) {
+    positionKnob(currentVector.x, currentVector.y, false);
+  }
+
+  updateDirectionArrow(left, right);
+}
+
+function updateWheel(id, value) {
+  var el = document.getElementById(id);
+  var arrow = el.querySelector('.wheel-arrow');
+  el.className = 'wheel ' + (id === 'whRL' ? 'wh-rl' : 'wh-rr');
+  if (value > 0) { el.classList.add('active-fwd'); arrow.innerHTML = '&#9650;'; }
+  else if (value < 0) { el.classList.add('active-bwd'); arrow.innerHTML = '&#9660;'; }
+}
+
+function updateDirectionArrow(left, right) {
+  if (left === 0 && right === 0) {
+    dirArrow.classList.add('hidden');
+    dirArrow.style.transform = 'rotate(0deg)';
+    return;
+  }
+  dirArrow.classList.remove('hidden');
+  var angle = 0;
+  if (left > 0 && right > 0) angle = 0;
+  else if (left < 0 && right < 0) angle = 180;
+  else if (left < 0 && right > 0) angle = -90;
+  else if (left > 0 && right < 0) angle = 90;
+  else if (left > right) angle = 45;
+  else if (right > left) angle = -45;
+  dirArrow.style.transform = 'rotate(' + angle + 'deg)';
+}
+
+// --- Battery ---
+var batteryGroup = document.getElementById('batteryGroup');
+var batteryFill = document.getElementById('batteryFill');
+var batteryText = document.getElementById('batteryText');
+var batteryLowLogged = false;
+
+function updateBattery(voltage) {
+  if (!voltage || voltage < 0.5) {
+    batteryGroup.style.display = 'none';
+    return;
+  }
+  batteryGroup.style.display = 'flex';
+  var pct = Math.max(0, Math.min(100, ((voltage - 4.5) / (6.0 - 4.5)) * 100));
+  batteryFill.style.width = pct + '%';
+  batteryFill.className = 'battery-fill' + (pct < 20 ? ' low' : pct < 40 ? ' mid' : '');
+  batteryText.textContent = voltage.toFixed(1) + 'V';
+  if (pct < 20 && !batteryLowLogged) {
+    batteryLowLogged = true;
+    log('Low battery: ' + voltage.toFixed(1) + 'V', 'error');
+  } else if (pct >= 20) {
+    batteryLowLogged = false;
+  }
+}
+
+// --- Virtual Joystick ---
+var joyContainer = document.getElementById('joystickContainer');
+var joyKnob = document.getElementById('joystickKnob');
+
+function positionKnob(nx, ny, isActive) {
+  var r = joyContainer.offsetWidth / 2;
+  var knobR = joyKnob.offsetWidth / 2;
+  joyKnob.style.left = (nx * r + r - knobR) + 'px';
+  joyKnob.style.top = (-ny * r + r - knobR) + 'px';
+  joyKnob.classList.toggle('active', isActive);
+}
+
+function handleJoystickInput(clientX, clientY) {
+  var rect = joyContainer.getBoundingClientRect();
+  var r = rect.width / 2;
+  var dx = (clientX - rect.left - r) / r;
+  var dy = -(clientY - rect.top - r) / r;
+  var mag = Math.sqrt(dx * dx + dy * dy);
+  if (mag > 1) { dx /= mag; dy /= mag; }
+  positionKnob(dx, dy, true);
+  joystickVector.x = parseFloat(dx.toFixed(2));
+  joystickVector.y = parseFloat(dy.toFixed(2));
+}
+
+function releaseJoystick() {
+  joystickActive = false;
+  positionKnob(0, 0, false);
+  joystickVector.x = 0;
+  joystickVector.y = 0;
+}
+
+// Mouse
+joyContainer.addEventListener('mousedown', function(e) {
+  e.preventDefault();
+  joystickActive = true;
+  handleJoystickInput(e.clientX, e.clientY);
+});
+document.addEventListener('mousemove', function(e) {
+  if (joystickActive) handleJoystickInput(e.clientX, e.clientY);
+});
+document.addEventListener('mouseup', function() {
+  if (joystickActive) releaseJoystick();
+});
+
+// Touch
+joyContainer.addEventListener('touchstart', function(e) {
+  e.preventDefault();
+  joystickActive = true;
+  handleJoystickInput(e.touches[0].clientX, e.touches[0].clientY);
+});
+document.addEventListener('touchmove', function(e) {
+  if (joystickActive) {
+    e.preventDefault();
+    handleJoystickInput(e.touches[0].clientX, e.touches[0].clientY);
+  }
+}, { passive: false });
+document.addEventListener('touchend', function() {
+  if (joystickActive) releaseJoystick();
+});
+
+// --- Keyboard ---
+document.addEventListener('keydown', function(e) {
+  if (document.activeElement.tagName === 'INPUT') return;
+  var key = e.key.toLowerCase();
+  if ('wasd'.indexOf(key) >= 0 && !keysDown.has(key)) {
+    keysDown.add(key);
+  }
+});
+document.addEventListener('keyup', function(e) {
+  if (document.activeElement.tagName === 'INPUT') return;
+  var key = e.key.toLowerCase();
+  if ('wasd'.indexOf(key) >= 0) {
+    keysDown.delete(key);
+  }
+});
+
+// Mouse/touch WASD buttons
+['w','a','s','d'].forEach(function(key) {
+  var btn = document.getElementById('btn' + key.toUpperCase());
+  function down(e) {
+    e.preventDefault();
+    if (!keysDown.has(key)) keysDown.add(key);
+  }
+  function up(e) {
+    e.preventDefault();
+    keysDown.delete(key);
+  }
+  btn.addEventListener('mousedown', down);
+  btn.addEventListener('mouseup', up);
+  btn.addEventListener('mouseleave', up);
+  btn.addEventListener('touchstart', down);
+  btn.addEventListener('touchend', up);
+});
+
+// Stop on window blur
+window.addEventListener('blur', function() {
+  keysDown.clear();
+  joystickVector.x = 0;
+  joystickVector.y = 0;
+  log('Window lost focus - motors stopping', 'warn');
+});
+
+// --- Start ---
+connectWs();
+</script>
+</body>
+</html>
