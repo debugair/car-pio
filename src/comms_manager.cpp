@@ -91,6 +91,8 @@ void CommsManager::onEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t 
             // Wertebereich: -255 (voll rückwärts) bis 255 (voll vorwärts)
             int left = 0, right = 0;
             if (sscanf((char*)payload, "%d,%d", &left, &right) == 2) {
+                left  = constrain(left,  -255, 255);
+                right = constrain(right, -255, 255);
                 _motors.setLeft(left);
                 _motors.setRight(right);
                 _lastCommandTime = millis(); // Totmann-Timer zurücksetzen
