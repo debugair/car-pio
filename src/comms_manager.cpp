@@ -26,9 +26,15 @@ void CommsManager::begin() {
     // Mit WLAN verbinden (SSID und Passwort aus config.h)
     Serial.printf("Verbinde mit WLAN '%s'", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    int attempts = 0;
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
+        if (++attempts >= 20) {
+            Serial.println("\nWLAN-Verbindung fehlgeschlagen — Neustart in 3s");
+            delay(3000);
+            ESP.restart();
+        }
     }
     Serial.printf("\nVerbunden! IP: %s\n", WiFi.localIP().toString().c_str());
 
