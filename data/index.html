@@ -414,7 +414,7 @@ function mixToMotors() {
 
 setInterval(function() {
   const now = performance.now();
-  const dt = (now - lastControlTime) / 1000; // vergangene Zeit in Sekunden
+  const dt = Math.min((now - lastControlTime) / 1000, 0.1); // max 100ms, verhindert Sprung nach Tab-Wechsel
   lastControlTime = now;
 
   computeTarget();       // Ziel aus Eingabe berechnen
