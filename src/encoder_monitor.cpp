@@ -38,8 +38,14 @@ void EncoderMonitor::update() {
 
     // RPM berechnen: (Pulse / Schlitze pro Umdrehung) / Sekunden × 60
     float seconds = elapsed / 1000.0f;
-    _leftRPM  = (lp / (float)ENCODER_SLOTS) / seconds * 60.0f;
-    _rightRPM = (rp / (float)ENCODER_SLOTS) / seconds * 60.0f;
+    float rawLeft  = (lp / (float)ENCODER_SLOTS) / seconds * 60.0f;
+    float rawRight = (rp / (float)ENCODER_SLOTS) / seconds * 60.0f;
+
+    // Exponentieller gleitender Mittelwert — glättet Rauschen einzelner Messzyklen
+    // 0.3 = 30% neuer Wert, 70% alter Wert
+    const float alpha = 0.3f;
+    _leftRPM  = alpha * rawLeft  + (1.0f - alpha) * _leftRPM;
+    _rightRPM = alpha * rawRight + (1.0f - alpha) * _rightRPM;
 
     _lastUpdate = now;
 }
