@@ -551,13 +551,11 @@ function updateDirectionArrow(left, right) {
     return;
   }
   dirArrow.classList.remove('hidden');
-  var angle;
-  if      (left > 0  && right > 0)  angle = 0;    // vorwärts
-  else if (left < 0  && right < 0)  angle = 180;  // rückwärts
-  else if (left < 0  && right > 0)  angle = -90;  // Pirouette links
-  else if (left > 0  && right < 0)  angle = 90;   // Pirouette rechts
-  else if (left > right)            angle = 45;   // Kurve rechts
-  else if (right > left)            angle = -45;  // Kurve links
+  // Vorwärtskomponente (positiv = vor, negativ = zurück) und Drehkomponente berechnen
+  var forward = (left + right) / 2;
+  var turn    = (left - right) / 2;
+  // atan2 liefert den Winkel kontinuierlich: 0° = vorwärts, 90° = rechts, 180° = rückwärts
+  var angle = Math.atan2(turn, forward) * (180 / Math.PI);
   dirArrow.style.transform = 'rotate(' + angle + 'deg)';
 }
 
