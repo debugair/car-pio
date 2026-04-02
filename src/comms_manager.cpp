@@ -41,6 +41,9 @@ void CommsManager::begin() {
     // WebSocket-Server starten — Browser verbindet sich hier für Echtzeit-Steuerung
     _lastCommandTime = millis(); // Totmann-Timer ab jetzt starten, nicht ab 0
 
+    // Alten WebSocket-Server freigeben falls begin() nochmal aufgerufen wird
+    if (_ws) { delete _ws; _ws = nullptr; }
+
     _ws = new WebSocketsServer(WEBSOCKET_PORT);
     _ws->begin();
     _ws->onEvent(eventTrampoline); // eventTrampoline leitet Events an onEvent() weiter
