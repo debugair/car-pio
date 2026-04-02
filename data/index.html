@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Car Controller</title>
 <link rel="icon" href="/favicon.ico" type="image/x-icon">
 <link rel="apple-touch-icon" href="/icon.png">
@@ -191,7 +191,13 @@
     padding: 10px 16px; font-size: 13px; font-weight: 600;
     color: #888; border-bottom: 1px solid #1a2332;
     text-transform: uppercase; letter-spacing: 1px;
+    display: flex; align-items: center; justify-content: space-between;
   }
+  .log-close {
+    display: none; background: none; border: none;
+    color: #888; font-size: 22px; cursor: pointer; padding: 0 4px; line-height: 1;
+  }
+  .log-close:hover { color: #eee; }
   .log-content {
     flex: 1; overflow-y: auto; padding: 8px 12px;
     font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6;
@@ -201,6 +207,73 @@
   .log-entry.cmd { color: #555; }
   .log-entry.warn { color: #f39c12; }
   .log-entry.error { color: #e74c3c; }
+
+  /* Log toggle button */
+  .log-toggle {
+    display: none; /* nur auf mobile sichtbar */
+    background: #16213e; border: 1px solid #4a6fa5; border-radius: 6px;
+    color: #888; font-size: 12px; padding: 4px 10px;
+    cursor: pointer; margin-left: auto;
+  }
+  .log-toggle.has-new { color: #2ecc71; border-color: #2ecc71; }
+
+  /* --- Tablet (601–900px) --- */
+  @media (max-width: 900px) {
+    .log-toggle { display: block; }
+    .log-panel {
+      position: fixed; top: 0; right: 0; bottom: 0;
+      width: 300px; z-index: 100;
+      transform: translateX(100%); transition: transform 0.25s;
+    }
+    .log-panel.open { transform: translateX(0); }
+    .log-close { display: block; }
+    .viz-panel { gap: 14px; padding: 12px; }
+  }
+
+  /* --- Phone (≤600px) --- */
+  @media (max-width: 600px) {
+    header { padding: 6px 12px; gap: 8px; }
+    header h1 { font-size: 15px; }
+    header h1 img { width: 22px; height: 22px; }
+
+    .viz-panel { gap: 10px; padding: 8px; justify-content: flex-start; }
+
+    /* Kleineres Auto */
+    .car-container { width: 120px; height: 190px; }
+    .car-body { top: 20px; left: 17px; width: 86px; height: 150px; border-radius: 20px 20px 14px 14px; }
+    .car-front { top: 28px; left: 40px; width: 40px; height: 7px; }
+    .wheel { width: 16px; height: 36px; border-radius: 4px; }
+    .wheel-arrow { font-size: 13px; }
+    .wh-fl { top: 34px; left: 5px; }
+    .wh-fr { top: 34px; right: 5px; }
+    .wh-rl { top: 122px; left: 5px; }
+    .wh-rr { top: 122px; right: 5px; }
+
+    .direction-arrow { width: 40px; height: 40px; }
+
+    /* Joystick groesser fuer Touch */
+    .joystick-container { width: 200px; height: 200px; }
+    .joystick-knob { width: 56px; height: 56px; top: 72px; left: 72px; }
+
+    /* WASD-Buttons auf Handy verstecken — Joystick reicht */
+    .controls { display: none; }
+    .input-row { gap: 0; justify-content: center; }
+
+    /* Motor-Werte kompakter */
+    .motor-values { gap: 12px; }
+    .motor-val .value { font-size: 18px; }
+    .motor-val .value.rpm { font-size: 16px; }
+    .motor-val .label { font-size: 10px; }
+
+    /* Config-Slider vertikal stapeln */
+    .config-panel { flex-direction: column; gap: 8px; padding: 8px 12px; }
+    .config-item { flex-direction: row; gap: 8px; width: 100%; }
+    .config-item label { min-width: 80px; text-align: right; font-size: 10px; }
+    .config-item input[type="range"] { flex: 1; min-width: 0; }
+
+    /* Log-Panel als Fullscreen-Overlay */
+    .log-panel { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -210,6 +283,7 @@
   <div class="status-group">
     <div class="indicator"><div class="dot" id="dotEsp"></div><span>ESP32</span></div>
   </div>
+  <button class="log-toggle" id="logToggle">Console</button>
 </header>
 
 <div class="main">
@@ -290,7 +364,7 @@
   </div>
 
   <div class="log-panel">
-    <div class="log-header">Console</div>
+    <div class="log-header">Console <button class="log-close" id="logClose">&times;</button></div>
     <div class="log-content" id="logContent"></div>
   </div>
 </div>
@@ -672,6 +746,41 @@ window.addEventListener('blur', function() {
   joystickVector.y = 0;
   log('Fenster verloren — Motoren gestoppt', 'warn');
 });
+
+
+// =============================================================================
+// KONSOLE-TOGGLE — Ein/Ausblenden auf Mobilgeräten
+// =============================================================================
+
+var logPanel  = document.querySelector('.log-panel');
+var logTogBtn = document.getElementById('logToggle');
+
+logTogBtn.addEventListener('click', function() {
+  logPanel.classList.toggle('open');
+  logTogBtn.classList.remove('has-new');
+});
+
+// Panel schliessen per X-Button
+document.getElementById('logClose').addEventListener('click', function() {
+  logPanel.classList.remove('open');
+});
+
+// Panel schliessen wenn man ausserhalb tippt
+document.addEventListener('click', function(e) {
+  if (logPanel.classList.contains('open') &&
+      !logPanel.contains(e.target) && e.target !== logTogBtn) {
+    logPanel.classList.remove('open');
+  }
+});
+
+// Ursprüngliche log()-Funktion erweitern: bei geschlossenem Panel Button markieren
+var _origLog = log;
+log = function(msg, cls) {
+  _origLog(msg, cls);
+  if (!logPanel.classList.contains('open') && window.innerWidth <= 900) {
+    logTogBtn.classList.add('has-new');
+  }
+};
 
 
 // =============================================================================
