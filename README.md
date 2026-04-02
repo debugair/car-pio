@@ -10,7 +10,7 @@ WLAN-gesteuertes Differentialantrieb-Auto mit einem ESP32-S3 und L298N Motortrei
 
 ### 1. Konfigurieren
 
-[`include/config.h`](include/config.h) öffnen und `WIFI_SSID` sowie `WIFI_PASSWORD` eintragen.
+[`include/config.h`](include/config.h) öffnen und `WIFI_SSID` sowie `WIFI_PASSWORD` eintragen. Falls die WLAN-Verbindung nach 10 Sekunden fehlschlägt, startet der ESP32 automatisch neu.
 
 ### 2. Firmware flashen
 
@@ -78,7 +78,7 @@ Wertebereich: `-255` (volle Rückwärtsfahrt) bis `255` (volle Vorwärtsfahrt). 
 T:links_rpm,rechts_rpm
 ```
 
-> Die Weboberfläche unterstützt einen optionalen dritten Wert `T:links,rechts,akkuV` — die Akkuanzeige erscheint automatisch sobald dieser gesendet wird. Die Akkuüberwachungs-Software ist aktuell nicht implementiert (Hardware vorhanden, siehe config.h).
+> Werte werden serverseitig auf `[-255, 255]` begrenzt.
 
 ---
 
@@ -103,7 +103,7 @@ Die Steuerlogik läuft vollständig im Browser (JavaScript) im 50ms-Takt.
 
 ### Totmann-Schalter
 
-Der ESP32 erwartet alle 250ms einen Fahrbefehl. Läuft das Timeout ab, stoppen die Motoren. Der Browser sendet beim Fokusverlust des Fensters und bei WebSocket-Verbindungsabbruch ebenfalls einen Stopp-Befehl.
+Der ESP32 erwartet alle 250ms einen Fahrbefehl. Läuft das Timeout ab, stoppen die Motoren. Der Browser sendet beim Fokusverlust des Fensters und bei WebSocket-Verbindungsabbruch ebenfalls einen Stopp-Befehl. Der Totmann-Timer startet erst nach erfolgreichem Boot (nicht ab Zeitpunkt 0).
 
 ---
 
@@ -112,6 +112,8 @@ Der ESP32 erwartet alle 250ms einen Fahrbefehl. Läuft das Timeout ab, stoppen d
 Jedes Rad hat eine Encoderscheibe mit 20 Schlitzen, ausgelesen per Hardware-Interrupt (`IRAM_ATTR` ISR, `RISING`-Flanke, `INPUT_PULLUP`). Die Drehzahl wird alle 100ms berechnet und an den Browser gesendet.
 
 RPM-Formel: `(Pulse / Schlitze_pro_Umdrehung) / vergangene_Sekunden × 60`
+
+Die Rohwerte werden mit einem exponentiellen gleitenden Mittelwert (α = 0,3) geglättet, um Rauschen einzelner Messzyklen zu reduzieren.
 
 ---
 
@@ -126,7 +128,6 @@ RPM-Formel: `(Pulse / Schlitze_pro_Umdrehung) / vergangene_Sekunden × 60`
 | Motoren | 2× Bürstenmotor DC |
 | Stromversorgung | 6V Akkupack |
 | Encoder | 2× Einkanal-Radencoder, 20 Schlitze/Umdrehung |
-| Akkusensor | Spannungsteiler (2× 10kΩ) an ADC-Pin — optional |
 
 ### Verkabelung
 
@@ -189,7 +190,6 @@ flowchart LR
 | ------ | ---- | -------- |
 | Linker Encoder | 6 | Radzählung per Interrupt |
 | Rechter Encoder | 7 | Radzählung per Interrupt |
-| Akkuspannungsteiler | 8 | Spannungsmessung per ADC (optional) |
 
 ---
 
@@ -229,10 +229,6 @@ _car/
 | `PWM_RESOLUTION` | 8 | PWM-Auflösung (Bit, 0–255) |
 | `MOTOR_LEFT_*` / `MOTOR_RIGHT_*` | siehe Datei | GPIO-Pin-Belegung der Motoren |
 | `ENCODER_LEFT` / `ENCODER_RIGHT` | 6, 7 | GPIO-Pins der Encoder |
-| `BATTERY_ADC_PIN` | 8 | GPIO für den Spannungsteilerausgang *(reserviert, SW noch nicht implementiert)* |
-| `BATTERY_DIVIDER_RATIO` | 2,0 | Spannungsmultiplikator *(reserviert)* |
-| `BATTERY_FULL_VOLTAGE` | 6,0 | Spannung bei vollem Akku *(reserviert)* |
-| `BATTERY_LOW_VOLTAGE` | 4,5 | Schwellwert für Niedrigakku-Warnung *(reserviert)* |
 
 ### Funktionen der Weboberfläche
 
@@ -242,10 +238,10 @@ _car/
 - **Richtungspfeil** — dreht sich entsprechend der Fahrtrichtung
 - **Motor-PWM-Balken** — Echtzeit-Anzeige der Motorwerte links/rechts
 - **RPM-Anzeige** — Live-Telemetrie beider Räder
-- **Akkuanzeige** — Spannungsbalken + Niedrigakku-Warnung (blendet sich aus wenn nicht angeschlossen)
 - **Einstellregler** — Beschleunigung, Kurvenradius, Maximalgeschwindigkeit (sofort wirksam)
 - **Konsolenlog** — Verbindungsereignisse, Konfigurationsänderungen, Warnungen (farbkodiert)
 - **Auto-Reconnect** — Browser verbindet sich bei WebSocket-Unterbrechung automatisch neu
+- **Responsive Layout** — optimiert für Desktop, Tablet und Smartphone (Joystick-Touch-Steuerung, angepasste Darstellung, ausklappbare Konsole)
 - **Sicherheit** — Fokusverlust des Fensters sendet Stopp-Befehl
 
 ---
@@ -285,7 +281,7 @@ _car/
 - [x] **Code-Refactoring** — MotorController, CommsManager, EncoderMonitor als Serviceklassen
 - [x] **Sanfte Steuerung** — Vektormodell, Beschleunigungsrampe, Differentialmischung, virtueller Joystick
 - [x] **Encoder-Telemetrie** — Interrupt-basierte RPM, Übertragung an Browser
-- [ ] **Akkuüberwachung** — Hardware (Spannungsteiler GPIO8) vorhanden, Software noch nicht implementiert
+- [ ] **Akkuüberwachung** — Hardware (Spannungsteiler) noch nicht angeschlossen
 - [x] **Icons** — favicon.ico + icon.png aus LittleFS
 - [ ] **Closed-Loop-Regelung** — PID-Drehzahlabgleich (links = rechts) per Encoder-Feedback
 
