@@ -35,9 +35,9 @@ void setup() {
     }
 
     // Webserver-Routen: Jede URL wird direkt aus LittleFS bedient
-    httpServer.serveStatic("/",           LittleFS, "/index.html");
-    httpServer.serveStatic("/favicon.ico", LittleFS, "/favicon.ico");
-    httpServer.serveStatic("/icon.png",    LittleFS, "/icon.png");
+    httpServer.serveStatic("/",            LittleFS, "/index.html", "text/html");
+    httpServer.serveStatic("/favicon.ico", LittleFS, "/favicon.ico", "image/x-icon");
+    httpServer.serveStatic("/icon.png",    LittleFS, "/icon.png",    "image/png");
     httpServer.begin();
 
     Serial.println("Webserver gestartet (Port 80)");
